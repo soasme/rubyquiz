@@ -10,9 +10,9 @@ module Quiz
       end
 
       def serialize(status, &filter)
-        return unless status['entities']['hashtags']
+        return unless status && status['entities'] && status['entities']['hashtags']
         status['entities']['hashtags'].each do |tag|
-          if tag and tag['text'] and filter.call(tag['text'], status)
+          if tag and tag['text'] and filter.call(tag['text'])
             dump(tag['text'], status)
           end
         end
@@ -59,12 +59,15 @@ module Quiz
         # Initialize a streaming api client.
         @client = Twitter::StreamingAPI::TrackClient.new CLIENT_OPTIONS
 
+      end
+
+      def serializer
         # Set TWEET_STREAM_SERIALIZER to `file` to dump tweets into files grouped by tag.
         # Set TWEET_STREAM_SERIALIZER to `console` to puts the content of tweet to STDOUT.
-        @serializer = case ENV['TWEET_STREAM_SERIALIZER']
-                      when 'console' then ConsoleSerializer.new
-                      when 'file' then FileSerializer.new
-                      else ConsoleSerializer.new
+        case ENV['TWEET_STREAM_SERIALIZER']
+        when 'console' then ConsoleSerializer.new
+        when 'file' then FileSerializer.new
+        else ConsoleSerializer.new
         end
       end
 
@@ -136,11 +139,12 @@ module Quiz
       end
 
       def reload(&block)
-        @client.track(raw_phrases) do |status|
-          @serializer.serialize(status) do |tag, status|
+        @client.on_tweet { |tweet|
+          serializer.serialize(tweet) { |tag|
             @phrases.include? format(tag)
-          end
-        end
+          }
+        }
+        @client.track raw_phrases
       end
     end
   end

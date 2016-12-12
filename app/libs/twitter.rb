@@ -6,6 +6,88 @@ require 'em-http'
 module Twitter
   module StreamingAPI
 
+    LOGGER = Logger.new(STDOUT)
+
+    class ChunkBuilder
+
+      def initialize &block
+        @next_message_bytes = ''
+        @next_message_size = 0
+        @next_message_callback = nil
+      end
+
+      def on_receive_message &block
+        @next_message_callback = block
+      end
+
+      def next_message
+        begin
+          # The individual messages streamed by this API are JSON encoded.  
+          message = JSON.parse(@next_message_bytes)
+
+          # Messages contains "delete" indicate that a given Tweet has been deleted. 
+          # Since RubyQuiz is a realtime application append data to file,
+          # we simply ignore this kind of message.
+          return nil if message.include?("delete")  || message.include?("location")
+
+          # Messages indicate that a filtered stream has matched more Tweets than 
+          # its current rate limit allows to be delivered. 
+          # Ignore it.
+          return nil if message.include?("limit")
+
+          return message
+        rescue JSON::ParserError
+          # JSON parser should tolerate unexpected or missing fields.
+          LOGGER.error action: :parse_stream, stream: @next_message_bytes
+        end
+      end
+
+      def receive_chunk chunk
+        # On slow streams, some messages may be blank lines which serve
+        # as “keep-alive” signals to prevent clients and other network
+        # infrastructure from assuming the stream has stalled and closing
+        # the connection.
+        return if chunk.strip.empty?
+
+        data = chunk.split /[\r\n]+/
+        data = data.reject {|e| e.empty?}
+
+        if data.size == 1
+          @next_message_bytes << chunk
+          LOGGER.debug action: :continue_receiving_message, bytes: @next_message_bytes.length
+        else
+          # By passing delimited=length, each message will be preceded by a
+          # string representation of a base-10 integer indicating the length
+          # of the message in bytes.
+
+          # In this case, we clear old state and begin new one.
+          @next_message_size, @next_message_bytes = 0, ''
+
+          @next_message_size = data[0].to_i
+          @next_message_bytes << data[1]
+
+          LOGGER.debug action: :start_receiving_message, expected: @next_message_size,
+            bytes: @next_message_bytes.length
+        end
+
+
+        if @next_message_size > 0 && @next_message_size <= @next_message_bytes.length
+          obj = next_message
+          if obj
+            @next_message_callback.call(obj)
+            LOGGER.debug action: :end_receiving_message, bytes: @next_message_bytes.length
+          else
+            LOGGER.debug action: :cancle_receiving_message, bytes: @next_message_bytes.length
+          end
+        end
+
+      end
+    end
+
+    class Connectify
+    end
+
+
     class TrackClient
 
       HOST = "stream.twitter.com"
@@ -16,116 +98,33 @@ module Twitter
       USER_AGENT = "RubyQuiz-Streaming-Client #{ VERSION }"
       ACCEPT_ENCODINGS = ['deflate', 'gzip']
       TRANSFER_ENCODING = "chunked"
-      NEWLINE = /[\r\n]+/
-
-      LOGGER = Logger.new(STDOUT)
+      CONNECT_TIMEOUT = 90
+      INACTIVITY_TIMEOUT = 90
 
       def initialize options
         @options = options
+        @chunk_builder = ChunkBuilder.new
         @term = ''
-        @delimited_length = 0
-        @stream = ''
         @errback = nil
-        @code = 0
-        @shutdown = false
         @started = Time.now.utc
         @conn = nil
-        @reconnect_sleep = 0
-        @track_block = nil
-      end
-
-      def connect options={}
-        EventMachine::HttpRequest.new FILTER_URL
       end
 
       def on_error &block
         @errback = block
       end
 
-      def reset
-        @code = 0
-        @delimited_length = 0
-        @stream = ''
+      def on_tweet &block
+        @chunk_builder.on_receive_message &block
       end
 
-      def stop_stream
-        @conn.close('stop stream connection') if @conn and not @conn.deferred
-        @conn = nil
-        reset
-      end
-
-      def send_request(term, &block)
-        stop_stream if @conn
-        @conn = connect
-        @http = @conn.post body: body, head: head
-        @http.stream { |chunk| receive_stream(chunk, &block) }
-        @http.headers &method(:receive_headers)
-        @http.errback &method(:receive_error)
-        @http.callback {
-          LOGGER.error action: :http_callback, status: @http.response_header.status,
-            headers: @http.response_header
-        }
-      end
-
-      def track term, &block
+      # TODO: We need to add rate limit for client.Clients which make excessive
+      # connection attempts (both successful and unsuccessful) run the risk of
+      # having their IP automatically banned.
+      def track term
         @term = term
-        @track_block = block
         if @term
-          send_request @term, &block
-        end
-      end
-
-      def receive_headers headers
-        @code = headers.http_status
-      end
-
-      def reconnect
-        if @reconnect_sleep == 0
-          track @term, &@track_block
-        end
-      end
-
-      def receive_error e
-        if e.class == EventMachine::HttpClient
-          if e.error == Errno::ETIMEDOUT
-            LOGGER.warn action: :reconnect, error: "Errno::ETIMEDOUT"
-            reconnect
-          else
-            LOGGER.error action: :handle_error, error: "#{ e.error }"
-          end
-        else
-          LOGGER.error action: :handle_error, error: "#{ e }"
-        end
-      end
-
-      def receive_stream chunk, &block
-        if chunk.strip.empty?
-          @delimited_length = 0
-          @stream = ''
-          return
-        end
-
-        data = chunk.split NEWLINE
-        LOGGER.debug action: :receive_chunk, bytes: chunk.length
-
-        if data.size == 2
-          @delimited_length = 0
-          @stream = ''
-          delimited_length, first_chunk = data
-          @delimited_length = delimited_length.to_i
-          @stream << first_chunk
-        else
-          @stream << chunk
-        end
-        if @delimited_length > 0 and @delimited_length <= @stream.length
-          obj = parsed_stream
-          if obj
-            hashtags = obj['entities']['hashtags']
-            hashtags = hashtags.map { |x| x['text'] }
-            hashtags = hashtags.join(',')
-            LOGGER.info action: :receive_message, bytes: @stream.length, hashtags: hashtags
-            block.call obj
-          end
+          send_request @term
         end
       end
 
@@ -136,13 +135,35 @@ module Twitter
         }
       end
 
-      def parsed_stream
-        @stream.strip!
-        begin
-          JSON.parse(@stream)
-        rescue JSON::ParserError
-          LOGGER.error action: :parse_stream, stream: @stream
+
+      private
+
+      def receive_callback
+        LOGGER.error action: :http_callback, status: @http.response_header.status,
+          headers: @http.response_header
+      end
+
+      def receive_headers headers
+        @code = headers.http_status
+      end
+
+      def receive_error e
+        if e.class == EventMachine::HttpClient
+          if e.error == Errno::ETIMEDOUT
+            LOGGER.warn action: :reconnect, error: "Errno::ETIMEDOUT"
+            reconnect
+          elsif e.error == "stop stream connection"
+            LOGGER.info action: :reschedule, message: e.error
+          else
+            LOGGER.error action: :handle_error, error: "#{ e.error }"
+          end
+        else
+          LOGGER.error action: :handle_error, error: "#{ e }"
         end
+      end
+
+      def receive_stream chunk
+        @chunk_builder.receive_chunk chunk
       end
 
       def body
@@ -152,6 +173,8 @@ module Twitter
         }
       end
 
+      # Read chapter "Gzip and EventMachine" at
+      # https://dev.twitter.com/streaming/overview/processing
       def head
         {
           "Host" => HOST,
@@ -164,6 +187,38 @@ module Twitter
 
       def authorization
         SimpleOAuth::Header.new 'POST', FILTER_URL, body, @options[:oauth]
+      end
+
+      def connect options={}
+        EventMachine::HttpRequest.new FILTER_URL,
+          :connect_timeout => CONNECT_TIMEOUT,
+          :inactivity_timeout => INACTIVITY_TIMEOUT
+      end
+
+      def reconnect
+        send_request @term if @term
+      end
+
+      def send_request term
+        # Twitter Policy: Each account may create only one standing connection
+        # to the public endpoints, and connecting to a public stream more than
+        # once with the same account credentials will cause the oldest connection
+        # to be disconnected.
+        #
+        # So, We have to stop stream first and then create a new connection.
+        stop_stream if @conn
+
+        @conn = connect
+        @http = @conn.post body: body, head: head
+        @http.stream  &method(:receive_stream)
+        @http.headers &method(:receive_headers)
+        @http.errback &method(:receive_error)
+        @http.callback &method(:receive_callback)
+      end
+
+      def stop_stream
+        @conn.close('stop stream connection') if @conn and not @conn.deferred
+        @conn = nil
       end
 
     end
