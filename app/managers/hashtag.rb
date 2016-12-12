@@ -10,7 +10,10 @@ module Quiz
       end
 
       def serialize(status, &filter)
-        return unless status && status['entities'] && status['entities']['hashtags']
+        unless status && status.class == Hash && status['entities'] && \
+            status['entities']['hashtags']
+          return
+        end
         status['entities']['hashtags'].each do |tag|
           if tag and tag['text'] and filter.call(tag['text'])
             dump(tag['text'], status)
@@ -139,12 +142,16 @@ module Quiz
       end
 
       def reload(&block)
-        @client.on_tweet { |tweet|
-          serializer.serialize(tweet) { |tag|
-            @phrases.include? format(tag)
+        phrases = raw_phrases
+        if phrases.empty?
+          @client.stop_stream
+        else
+          @client.track raw_phrases
+
+          @client.tweet { |tweet|
+            serializer.serialize(tweet) {|tag| include? tag }
           }
-        }
-        @client.track raw_phrases
+        end
       end
     end
   end

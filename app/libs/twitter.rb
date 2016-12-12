@@ -11,6 +11,7 @@ module Twitter
     class ChunkBuilder
 
       def initialize &block
+        @chunks = Array.new
         @next_message_bytes = ''
         @next_message_size = 0
         @next_message_callback = nil
@@ -21,6 +22,8 @@ module Twitter
       end
 
       def next_message
+        return nil unless @next_message_bytes
+
         begin
           # The individual messages streamed by this API are JSON encoded.  
           message = JSON.parse(@next_message_bytes)
@@ -43,48 +46,144 @@ module Twitter
       end
 
       def receive_chunk chunk
-        # On slow streams, some messages may be blank lines which serve
-        # as “keep-alive” signals to prevent clients and other network
-        # infrastructure from assuming the stream has stalled and closing
-        # the connection.
         return if chunk.strip.empty?
 
         data = chunk.split /[\r\n]+/
         data = data.reject {|e| e.empty?}
+        data.each { |elem|
+          @chunks.push elem
+        }
 
-        if data.size == 1
-          @next_message_bytes << chunk
-          LOGGER.debug action: :continue_receiving_message, bytes: @next_message_bytes.length
-        else
-          # By passing delimited=length, each message will be preceded by a
-          # string representation of a base-10 integer indicating the length
-          # of the message in bytes.
-
-          # In this case, we clear old state and begin new one.
-          @next_message_size, @next_message_bytes = 0, ''
-
-          @next_message_size = data[0].to_i
-          @next_message_bytes << data[1]
-
-          LOGGER.debug action: :start_receiving_message, expected: @next_message_size,
-            bytes: @next_message_bytes.length
-        end
-
-
-        if @next_message_size > 0 && @next_message_size <= @next_message_bytes.length
-          obj = next_message
-          if obj
-            @next_message_callback.call(obj)
-            LOGGER.debug action: :end_receiving_message, bytes: @next_message_bytes.length
+        if @chunks.size >= 2
+          message = build_chunks
+          if message
+            @next_message_callback.call(message)
+            LOGGER.debug action: :received_message,
+              expected: @next_message_size,
+              bytes: @next_message_bytes.length
           else
-            LOGGER.debug action: :cancle_receiving_message, bytes: @next_message_bytes.length
+            LOGGER.debug action: :received_chunk,
+              expected: @next_message_size,
+              bytes: chunk.length
           end
         end
+      end
 
+      def build_chunks
+        @next_message_size = @chunks[0].to_i
+        received_sizes = @chunks[1,@chunks.length-1].map {|e| e.length}
+        received_size = received_sizes.reduce :+
+
+        # A message contains '\r\n' as delimiter. Since we split
+        # by '\r\n', we need reduce size by 2 to get actual size.
+        if received_size >= @next_message_size - 2
+          @next_message_bytes = @chunks[1,@chunks.length-1].join
+          @next_message_bytes = @next_message_bytes[0, @next_message_size - 2]
+          message = next_message
+          @chunks.clear
+          @next_message_size = 0
+          return message
+        end
       end
     end
 
-    class Connectify
+    class Reconnector
+      # Once an established connection drops, attempt to reconnect immediately.
+      # If the reconnect fails, slow down your reconnect attempts according
+      # to the type of error experienced.
+
+      # Back off linearly for TCP/IP level network errors. These
+      # problems are generally temporary and tend to clear quickly.
+      # Increase the delay in reconnects by 250ms each attempt, up
+      # to 16 seconds.
+      NETWORK_ERROR_BACKOFF_INITIAL = 0
+      NETWORK_ERROR_BACKOFF_DELAY = 0.25
+      NETWORK_ERROR_BACKOFF_MAXIMUM = 16
+
+      # Back off exponentially for HTTP errors for which reconnecting
+      # would be appropriate. Start with a 5 second wait, doubling each
+      # attempt, up to 320 seconds.
+      HTTP_ERROR_BACKOFF_INITIAL = 5
+      HTTP_ERROR_BACKOFF_MAXIMUM = 320
+
+      # Back off exponentially for HTTP 420 errors. Start with a 1
+      # minute wait and double each attempt. Note that every HTTP 420
+      # received increases the time you must wait until rate limiting
+      # will no longer will be in effect for your account.
+      HTTP_420_BACKOFF_INITIAL = 60
+      HTTP_420_BACKOFF_MAXIMUM = 480
+
+      ENO = :no
+      ENETWORK = :network
+      EHTTP = :http
+      EHTTP420 = :http420
+
+      def initialize
+        @errtype = ENO
+        @backoff = 0
+        @giveup = false
+      end
+
+      def reset errtype
+        @errtype = errtype
+        @giveup = false
+        case @errtype
+        when ENO
+          @backoff = 0
+        when ENETWORK
+          @backoff = NETWORK_ERROR_BACKOFF_INITIAL
+        when EHTTP
+          @backoff = HTTP_ERROR_BACKOFF_INITIAL
+        when EHTTP420
+          @backoff = HTTP_420_BACKOFF_INITIAL
+        end
+      end
+
+      def backoff errtype
+        case @errtype
+        when ENO
+          @backoff = 0
+        when ENETWORK
+          @backoff += NETWORK_ERROR_BACKOFF_DELAY
+          if @backoff > NETWORK_ERROR_BACKOFF_MAXIMUM
+            @giveup = true
+          end
+        when EHTTP
+          @backoff *= 2
+          if @backoff > HTTP_ERROR_BACKOFF_MAXIMUM
+            @giveup = true
+          end
+        when EHTTP420
+          @backoff *= 2
+          if @backoff > HTTP_420_BACKOFF_MAXIMUM
+            @giveup = true
+          end
+        end
+      end
+
+      def execute errtype, &block
+        if errtype == @errtype
+          backoff errtype
+        else
+          reset errtype
+        end
+
+        if @giveup
+          LOGGER.error action: :giveup_reconnecting,
+            errtype: errtype,
+            backoff: @backoff
+        elsif @backoff == 0
+          LOGGER.info action: :reconnect_immediately,
+            errtype: errtype
+          block.call
+        else
+          LOGGER.info action: :backoff,
+            errtype: @errtype,
+            backoff: @backoff
+          EM::Timer.new(@backoff, &block)
+        end
+      end
+
     end
 
 
@@ -104,6 +203,7 @@ module Twitter
       def initialize options
         @options = options
         @chunk_builder = ChunkBuilder.new
+        @reconnector = Reconnector.new
         @term = ''
         @errback = nil
         @started = Time.now.utc
@@ -114,7 +214,7 @@ module Twitter
         @errback = block
       end
 
-      def on_tweet &block
+      def tweet &block
         @chunk_builder.on_receive_message &block
       end
 
@@ -135,12 +235,19 @@ module Twitter
         }
       end
 
+      def stop_stream
+        @conn.close('stop stream connection') if @conn and not @conn.deferred
+        @conn = nil
+      end
 
       private
 
-      def receive_callback
-        LOGGER.error action: :http_callback, status: @http.response_header.status,
-          headers: @http.response_header
+      def receive_callback cb=nil
+        if @http.response_header.status == 420
+          reconnect Reconnector::EHTTP420
+        else
+          reconnect Reconnector::EHTTP
+        end
       end
 
       def receive_headers headers
@@ -150,10 +257,11 @@ module Twitter
       def receive_error e
         if e.class == EventMachine::HttpClient
           if e.error == Errno::ETIMEDOUT
-            LOGGER.warn action: :reconnect, error: "Errno::ETIMEDOUT"
-            reconnect
+            reconnect Reconnector::ENETWORK
           elsif e.error == "stop stream connection"
             LOGGER.info action: :reschedule, message: e.error
+          elsif e.error == "connection closed by server"
+            receive_callback
           else
             LOGGER.error action: :handle_error, error: "#{ e.error }"
           end
@@ -195,8 +303,9 @@ module Twitter
           :inactivity_timeout => INACTIVITY_TIMEOUT
       end
 
-      def reconnect
-        send_request @term if @term
+      def reconnect errtype
+        call = Proc.new { send_request(@term) if @term }
+        @reconnector.execute errtype, &call
       end
 
       def send_request term
@@ -216,10 +325,6 @@ module Twitter
         @http.callback &method(:receive_callback)
       end
 
-      def stop_stream
-        @conn.close('stop stream connection') if @conn and not @conn.deferred
-        @conn = nil
-      end
 
     end
   end
