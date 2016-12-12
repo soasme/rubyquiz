@@ -37,7 +37,6 @@ module Quiz
 
       get '/consumer/:hashtag/status' do
         status = {}
-        status.merge!(HashTag.client.status)
         status.merge!(is_following: HashTag.status(params[:hashtag]))
         success status
       end
