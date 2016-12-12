@@ -12,3 +12,7 @@ group :development do
     gem "capistrano", "~> 3.7"
     gem "capistrano-bundler"
 end
+
+group :test do
+  gem "rspec"
+end
