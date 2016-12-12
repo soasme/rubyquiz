@@ -1,5 +1,6 @@
 require 'rack/test'
 require 'rspec'
+require 'rspec/em'
 
 ENV['RACK_ENV'] = 'test'
 

@@ -118,6 +118,7 @@ module Twitter
       EHTTP = :http
       EHTTP420 = :http420
 
+
       def initialize
         @errtype = ENO
         @backoff = 0
@@ -137,6 +138,14 @@ module Twitter
         when EHTTP420
           @backoff = HTTP_420_BACKOFF_INITIAL
         end
+      end
+
+      def status
+        {
+          backoff: @backoff,
+          errtype: @errtype,
+          giveup: @giveup,
+        }
       end
 
       def backoff errtype
@@ -271,6 +280,7 @@ module Twitter
       end
 
       def receive_stream chunk
+        @reconnector.reset Reconnector::ENO
         @chunk_builder.receive_chunk chunk
       end
 
@@ -304,8 +314,9 @@ module Twitter
       end
 
       def reconnect errtype
-        call = Proc.new { send_request(@term) if @term }
-        @reconnector.execute errtype, &call
+        @reconnector.execute errtype do
+          send_request(@term) if @term
+        end
       end
 
       def send_request term
