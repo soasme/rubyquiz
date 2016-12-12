@@ -1,4 +1,4 @@
-require 'ostruct'
+require 'logger'
 require 'json'
 require 'simple_oauth'
 require 'em-http'
@@ -14,7 +14,7 @@ module Twitter
         @chunks = Array.new
         @next_message_bytes = ''
         @next_message_size = 0
-        @next_message_callback = nil
+        @next_message_callback = block
       end
 
       def on_receive_message &block
@@ -42,6 +42,7 @@ module Twitter
         rescue JSON::ParserError
           # JSON parser should tolerate unexpected or missing fields.
           LOGGER.error action: :parse_stream, stream: @next_message_bytes
+          nil
         end
       end
 
@@ -61,6 +62,8 @@ module Twitter
             LOGGER.debug action: :received_message,
               expected: @next_message_size,
               bytes: @next_message_bytes.length
+            @chunks.clear
+            @next_message_size = 0
           else
             LOGGER.debug action: :received_chunk,
               expected: @next_message_size,
@@ -79,10 +82,7 @@ module Twitter
         if received_size >= @next_message_size - 2
           @next_message_bytes = @chunks[1,@chunks.length-1].join
           @next_message_bytes = @next_message_bytes[0, @next_message_size - 2]
-          message = next_message
-          @chunks.clear
-          @next_message_size = 0
-          return message
+          return next_message
         end
       end
     end
