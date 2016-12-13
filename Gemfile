@@ -13,6 +13,7 @@ group :development do
     gem "capistrano-bundler"
     gem "capistrano-rvm"
     gem "capistrano-thin"
+    gem "capistrano-dotenv-tasks"
 end
 
 group :test do
