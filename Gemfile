@@ -11,6 +11,8 @@ gem 'em-http-request'
 group :development do
     gem "capistrano", "~> 3.7"
     gem "capistrano-bundler"
+    gem "capistrano-rvm"
+    gem "capistrano-thin"
 end
 
 group :test do

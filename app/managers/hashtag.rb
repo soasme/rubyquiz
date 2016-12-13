@@ -34,7 +34,8 @@ module Quiz
 
     class FileSerializer < BaseTweetSerializer
       def dump(tag, status)
-        filename = ENV['TWEET_STREAM_SERIALIZE_DIR'] + '/' + tag.downcase
+        dir = ENV['TWEET_STREAM_SERIALIZE_DIR'] || './data/'
+        filename = "#{ dir }/#{ tag.downcase }"
         File.open(filename, 'a') do |f|
           f << "#{ status['text'] }\n"
         end
@@ -70,6 +71,7 @@ module Quiz
       def serializer
         # Set TWEET_STREAM_SERIALIZER to `file` to dump tweets into files grouped by tag.
         # Set TWEET_STREAM_SERIALIZER to `console` to puts the content of tweet to STDOUT.
+        # Otherwise, do nothing about the data.
         case ENV['TWEET_STREAM_SERIALIZER']
         when 'console' then ConsoleSerializer.new
         when 'file' then FileSerializer.new

@@ -53,3 +53,6 @@ data/
 log/
 tmp/
 .env
+
+config/thin/production.yml
+config/thin/staging.yml

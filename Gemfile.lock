@@ -16,6 +16,12 @@ GEM
       capistrano (~> 3.1)
       sshkit (~> 1.2)
     capistrano-harrow (0.5.3)
+    capistrano-rvm (0.1.2)
+      capistrano (~> 3.0)
+      sshkit (~> 1.2)
+    capistrano-thin (1.2.0)
+      capistrano (~> 3.0)
+      thin (~> 1.6)
     cookiejar (0.3.3)
     crack (0.4.3)
       safe_yaml (~> 1.0.0)
@@ -93,6 +99,8 @@ PLATFORMS
 DEPENDENCIES
   capistrano (~> 3.7)
   capistrano-bundler
+  capistrano-rvm
+  capistrano-thin
   dotenv
   em-http-request
   eventmachine
