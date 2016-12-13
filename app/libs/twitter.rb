@@ -7,6 +7,7 @@ module Twitter
   module StreamingAPI
 
     LOGGER = Logger.new(STDOUT)
+    LOGGER.level = Logger::INFO
 
     class ChunkBuilder
 
