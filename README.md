@@ -69,4 +69,4 @@ to servers:
 
 Run:
 
-    $ bundle exec 
+    $ bundle exec rake
