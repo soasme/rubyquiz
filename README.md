@@ -20,8 +20,10 @@ following functional requirements:
 
 You can use `git` to clone it from GitHub:
 
-    $ git clone git@github.com:soasme/rubyquiz.git /tmp/rubyquiz
-    $ cd /tmp/rubyquiz
+```env
+$ git clone git@github.com:soasme/rubyquiz.git /tmp/rubyquiz
+$ cd /tmp/rubyquiz
+```
 
 ## How to configure it?
 
@@ -30,23 +32,31 @@ It read configurations from environment. You can simple put a `.env` file to con
 or just simple set environment. You can copy template `.env.sample` as your configuration,
 and don't forget to amend it:
 
-    $ cp .env.sample .env
-    $ vim .env # set your twitter application token and secret.
+```
+$ cp .env.sample .env
+$ vim .env # set your twitter application token and secret.
+```
 
 ## How to run it in development environment?
 
 After configuration settings done, you need to install all dependencies:
 
-    $ bundle install
+```bash
+$ bundle install
+```
 
 After dependencies installed, you can start application in foreground (Type Ctrl-C to
 stop it):
 
-    $ bundle exec thin start
+```bash
+$ bundle exec thin start
+```
 
 Or you can start application as daemon (don't forget to modify thin config file: `config/thin/example.yml`):
 
-    $ QUIZ_CONFIG=config/example.yml ./bin/start_server
+```bash
+$ QUIZ_CONFIG=config/example.yml ./bin/start_server
+```
 
 ## How to deploy?
 
@@ -56,6 +66,7 @@ RubyQuiz use `Capistrano` as deploy tool.
 2. Add stage configurations in `config/deploy`, like `config/deploy/production.yml`.
 3. Create && Edit && Upload config/thin/production.yml
 
+```bash
     $ bundle exec thin config -C config/thin/production.yml
     $ vi config/thin/production.yml
     $ bundle exec cap production setup:upload_thin_yml
@@ -63,6 +74,7 @@ RubyQuiz use `Capistrano` as deploy tool.
     01 mkdir -p /var/www/rubyquiz/shared/config/thin
     ✔ 01 root@ss001 0.499s
     Uploading /var/www/rubyquiz/shared/config/thin/production.yml 100.0%
+```
 
 4. Set environment. The environment items are listed in `.env.sample`.
 
@@ -73,6 +85,7 @@ RubyQuiz use `Capistrano` as deploy tool.
 
 5. Deploy application
 
+```bash
     $ bundle exec cap production deploy
     00:00 git:wrapper
         01 mkdir -p /tmp
@@ -135,10 +148,12 @@ RubyQuiz use `Capistrano` as deploy tool.
     00:28 deploy:log_revision
         01 echo "Branch master (at e8a4f2206bd279806df58108a37833781fb0cf75) deployed as release 20161213033240 by soasme…
         ✔ 01 root@ss001 0.476s
-
+```
 
 ## How to test it?
 
 Run:
 
-    $ bundle exec rake
+```bash
+$ bundle exec rake
+```
