@@ -1,21 +1,25 @@
 #require File.expand_path(File.dirname(__FILE__) + '/spec_helper')
 require 'spec_helper'
 
-describe 'Twitter::StreamingAPI' do
+include Twitter
 
-  Twitter::StreamingAPI::LOGGER.level = Logger::FATAL
+describe Twitter::StreamingAPI do
 
-  describe 'ChunkBuilder' do
+  before do
+    StreamingAPI::LOGGER.level = Logger::FATAL
+  end
+
+  describe StreamingAPI::ChunkBuilder do
 
     it "should build message from one chunk" do
-      builder = Twitter::StreamingAPI::ChunkBuilder.new {|message|
+      builder = StreamingAPI::ChunkBuilder.new {|message|
         expect(message).to eq({"k" => "v"})
       }
       builder.receive_chunk "12\r\n{\"k\": \"v\"}\r\n"
     end
 
     it "should build message from two chunks" do
-      builder = Twitter::StreamingAPI::ChunkBuilder.new {|message|
+      builder = StreamingAPI::ChunkBuilder.new {|message|
         expect(message).to eq({"k" => "v"})
       }
       builder.receive_chunk "12\r\n{\"k\""
@@ -23,14 +27,14 @@ describe 'Twitter::StreamingAPI' do
     end
 
     it "should build message from multiline" do
-      builder = Twitter::StreamingAPI::ChunkBuilder.new {|message|
+      builder = StreamingAPI::ChunkBuilder.new {|message|
         expect(message).to eq({"k" => "v"})
       }
       builder.receive_chunk "12\r\n{\"k\": \"v\"}\r\nExceeded connection limit for user\r\n"
     end
   end
 
-  describe "Reconnector" do
+  describe StreamingAPI::Reconnector do
 
     include RSpec::EM::FakeClock
 
@@ -38,7 +42,7 @@ describe 'Twitter::StreamingAPI' do
     after { clock.reset  }
 
     it "should reconnect immediately on network error" do
-      reconnector = Twitter::StreamingAPI::Reconnector.new
+      reconnector = StreamingAPI::Reconnector.new
       reconnector.execute :network do end
       expect(reconnector.status).to eq({backoff: 0, errtype: :network, giveup: false})
     end
@@ -105,25 +109,56 @@ describe 'Twitter::StreamingAPI' do
 
 end
 
-describe 'Twitter::StrreamingAPI::TrackClient' do
+Host = "127.0.0.1"
+Port = 9550
+
+describe 'Twitter::StreamingAPI::TrackClient' do
+
+  def opts
+    {
+      oauth: {
+        :consumer_key => '1234',
+        :consumer_secret => 'abcd',
+        :token => 'zyxw',
+        :token_secret => '9876'
+      }
+    }
+  end
+
   it "should connect to twitter json stream with oauth authorization" do
+    client = StreamingAPI::TrackClient.new opts
+    client.term = '#hashtag'
+    expect(client.authorization.to_s).to include('OAuth ')
   end
 
-  it "should track tags " do
-  end
-
-  it "should parse json stream" do
-  end
-
-  it "should build chunks into message" do
-  end
-
-  it "should reconnect immediately on timeout" do
-  end
-
-  it "should stop reconnecting on maximum attemps" do
+  it "should track term" do
+    stub_request(:post, StreamingAPI::TrackClient::FILTER_URL).to_return(:status=>204)
+    EM.run_block {
+      client = StreamingAPI::TrackClient.new opts
+      client.track '#word1,#word2'
+      expect(client.term).to eq('#word1,#word2')
+    }
   end
 
   it "should stop stream" do
+    stub_request(:post, StreamingAPI::TrackClient::FILTER_URL).to_return(:status=>204)
+    EM.run_block {
+      client = StreamingAPI::TrackClient.new opts
+      client.track '#word1,#word2'
+      expect(client.conn).to be
+      client.stop_stream
+      expect(client.conn).not_to be
+    }
   end
+
+  it "should check status" do
+    stub_request(:post, StreamingAPI::TrackClient::FILTER_URL).to_return(:status=>204)
+    EM.run_block {
+      client = StreamingAPI::TrackClient.new opts
+      expect(client.status[:tracking_terms]).to eq('')
+      client.track '#word'
+      expect(client.status[:tracking_terms]).to eq('#word')
+    }
+  end
+
 end

@@ -209,6 +209,8 @@ module Twitter
       CONNECT_TIMEOUT = 90
       INACTIVITY_TIMEOUT = 90
 
+      attr_accessor :term, :conn, :http
+
       def initialize options
         @options = options
         @chunk_builder = ChunkBuilder.new
@@ -217,6 +219,8 @@ module Twitter
         @errback = nil
         @started = Time.now.utc
         @conn = nil
+        @conn_class = options[:conn_class] || EventMachine::HttpRequest
+        @filter_url = options[:filter_url] || FILTER_URL
       end
 
       def on_error &block
@@ -248,8 +252,6 @@ module Twitter
         @conn.close('stop stream connection') if @conn and not @conn.deferred
         @conn = nil
       end
-
-      private
 
       def receive_callback cb=nil
         if @http.response_header.status == 420
@@ -304,11 +306,11 @@ module Twitter
       end
 
       def authorization
-        SimpleOAuth::Header.new 'POST', FILTER_URL, body, @options[:oauth]
+        SimpleOAuth::Header.new 'POST', @filter_url, body, @options[:oauth]
       end
 
       def connect options={}
-        EventMachine::HttpRequest.new FILTER_URL,
+        @conn_class.new @filter_url,
           :connect_timeout => CONNECT_TIMEOUT,
           :inactivity_timeout => INACTIVITY_TIMEOUT
       end
