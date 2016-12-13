@@ -15,7 +15,10 @@ module Quiz
           return
         end
         status['entities']['hashtags'].each do |tag|
-          if tag and tag['text'] and filter.call(tag['text'])
+          if tag && tag['text']
+            unless filter.nil? || filter.call(tag['text'])
+              return
+            end
             dump(tag['text'], status)
           end
         end
@@ -32,7 +35,7 @@ module Quiz
     class FileSerializer < BaseTweetSerializer
       def dump(tag, status)
         filename = ENV['TWEET_STREAM_SERIALIZE_DIR'] + '/' + tag.downcase
-        open(filename, 'a') do |f|
+        File.open(filename, 'a') do |f|
           f << "#{ status['text'] }\n"
         end
       end
@@ -42,7 +45,7 @@ module Quiz
 
       include Singleton
 
-      attr_reader :client
+      attr_accessor :client
 
       MAXIMUM = 100
       CLIENT_OPTIONS = {
@@ -70,7 +73,7 @@ module Quiz
         case ENV['TWEET_STREAM_SERIALIZER']
         when 'console' then ConsoleSerializer.new
         when 'file' then FileSerializer.new
-        else ConsoleSerializer.new
+        else BaseTweetSerializer.new
         end
       end
 
@@ -95,9 +98,11 @@ module Quiz
         # So, comma is not allowed in hashtag.
         return false if hashtag.include? ','
 
+        return false if hashtag.include? '#'
+
         # Each phrase must be between 1 and 60 bytes, inclusive.
         # Since we track #hashtag, so this number would be between 1 and 59 bytes, inclusive.
-        return false if hashtag.length < 1 and hashtag.length > 59
+        return false if hashtag.length < 1 || hashtag.length > 59
 
         # Non-space separated languages, such as CJK are currently unsupported.
         return false if !!(hashtag =~ /\p{Han}|\p{Katakana}|\p{Hiragana}|\p{Hangul}/)
