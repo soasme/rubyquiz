@@ -56,3 +56,5 @@ tmp/
 
 config/thin/production.yml
 config/thin/staging.yml
+config/deploy/production.rb
+config/deploy/staging.rb

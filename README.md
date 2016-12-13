@@ -52,9 +52,9 @@ Or you can start application as daemon (don't forget to modify thin config file:
 
 RubyQuiz use `Capistrano` as deploy tool.
 
-0. Install Dependencies: rvm, ruby
-
-1. Create && Edit && Upload thin yml
+1. Install Dependencies: rvm, ruby
+2. Add stage configurations in `config/deploy`, like `config/deploy/production.yml`.
+3. Create && Edit && Upload thin yml
 
     $ bundle exec thin config -C config/thin/production.yml
     $ vi config/thin/production.yml
@@ -64,7 +64,7 @@ RubyQuiz use `Capistrano` as deploy tool.
     ✔ 01 root@ss001 0.499s
     Uploading /var/www/rubyquiz/shared/config/thin/production.yml 100.0%
 
-2. Deploy application
+4. Deploy application
 
     $ bundle exec cap production deploy
     00:00 git:wrapper

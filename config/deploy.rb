@@ -22,14 +22,18 @@ set :repo_url, "git@github.com:soasme/rubyquiz.git"
 
 # Default value for :linked_files is []
 # append :linked_files, "config/database.yml", "config/secrets.yml"
-append :linked_files, "config/production.yml"
 
 # Default value for linked_dirs is []
 # append :linked_dirs, "log", "tmp/pids", "tmp/cache", "tmp/sockets", "public/system"
-append :linked_dirs, "log", "tmp/pids"
+append :linked_dirs, "log", "tmp/pids", "data"
 
 # Default value for default_env is {}
 # set :default_env, { path: "/opt/ruby/bin:$PATH" }
 
 # Default value for keep_releases is 5
 # set :keep_releases, 5
+
+set :thin_config_path, -> { "#{shared_path}/config/thin/#{fetch(:stage)}.yml"  }
+
+after 'deploy:publishing', 'deploy:restart_thin'
+
